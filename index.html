@@ -27,7 +27,7 @@ p{font-size:clamp(18px,3vw,24px);color:var(--muted);margin:0 0 22px;text-align:c
 </style>
 <script>
 /* ===== Lernwelt-Hülle: Namen, Sicherung, Updates ===== */
-const APP_VERSION="2.2";
+const APP_VERSION="2.3";
 const KEYS=["weltentdecker_dennis_v1","spielzeit_devid_v1","lernwelt_names"];
 function names(){let n={};try{n=JSON.parse(localStorage.getItem("lernwelt_names")||"{}")}catch(e){}return{k1:n.k1||"Großer Entdecker",k2:n.k2||"Kleiner Entdecker"}}
 function nm(t){const n=names();return t.split("§K1§").join(n.k1).split("§K2§").join(n.k2)}
@@ -85,7 +85,7 @@ window.addEventListener("message",e=>{if(e.data==="lernwelt:switch")back()});
 <div id="lwBar" style="position:fixed;right:12px;bottom:12px;z-index:5;text-align:right">
 <div id="lwMenu" style="display:none;background:#fff;border-radius:16px;box-shadow:0 6px 20px rgba(0,0,0,.15);padding:8px;margin-bottom:8px;font-size:16px">
 <button onclick="askNames()" class="lwb">✏️ Namen ändern</button><button onclick="exportBackup()" class="lwb">💾 Sicherung speichern</button><button onclick="importBackup()" class="lwb">📂 Sicherung laden</button>
-<div style="color:#6b6b7d;font-size:13px;padding:6px 10px">Version 2.2 · Daten nur auf diesem iPad</div></div>
+<div style="color:#6b6b7d;font-size:13px;padding:6px 10px">Version 2.3 · Daten nur auf diesem iPad</div></div>
 <button onclick="openMenu()" style="border:0;border-radius:20px;padding:8px 14px;font:inherit;font-size:15px;background:rgba(255,255,255,.75);color:#6b6b7d">⚙️ Eltern</button></div>
 <div id="lwToast" style="position:fixed;left:50%;top:16px;transform:translateX(-50%);background:#2b2b3a;color:#fff;padding:10px 18px;border-radius:18px;font-weight:700;opacity:0;transition:opacity .4s;z-index:9;pointer-events:none;max-width:90vw;text-align:center"></div>
 <style>.lwb{display:block;width:100%;border:0;background:none;text-align:left;font:inherit;font-size:17px;padding:10px 12px;border-radius:10px}.lwb:active{background:#f2f2f6}</style>

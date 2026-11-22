@@ -66,7 +66,7 @@ select.pill{appearance:auto}
   <p class="sub">Auto fahren und knobeln</p>
   <div class="grid">
     <button class="tile" data-g="drive"><div class="ico">🚗</div><b>Landstraße</b><span>Fahrt mit Leveln: bis ins Ziel fahren, Sterne sammeln, Autos und Hütchen ausweichen. Jedes Level etwas kniffliger.</span></button>
-    <button class="tile" data-g="draw"><div class="ico">✏️</div><b>Linienzauber</b><span>Rätsel: Linien malen, damit die Kugel in den Korb rollt. 12 Level zum Freischalten.</span></button>
+    <button class="tile" data-g="draw"><div class="ico">✏️</div><b>Linienzauber</b><span>Rätsel: Linien malen, damit die Kugel in den Korb rollt. 57 Level mit Federn, Dornen, Portalen und Wind.</span></button>
   </div>
   <div id="menuFoot">
     <button class="pill" id="mMusic">🎵 Musik: an</button>
@@ -696,6 +696,49 @@ GAMES.runner={title:'🦊 Waldflitzer',start(stage){
 /* =====================================================================
    8) LINIENZAUBER – Linien malen, Kugel ins Ziel rollen
    ===================================================================== */
+/* Linienzauber-Physik (gemeinsam für Spiel und Level-Prüfer). Spielfeld 1000 x 600. */
+var DRAW_ENGINE=(function(){
+const R=18,G=900,PR=28;
+function clamp(v,a,b){return Math.max(a,Math.min(b,v))}
+function moverOff(m,t){const k=Math.sin(2*Math.PI*t/(m.per||3));return [m.dx*k,m.dy*k]}
+// alle Kollisions-Segmente zum Zeitpunkt t
+function segs(lv,strokes,t){const a=[];const [gx,gy,gw,gh]=lv.goal;
+  for(const w of lv.walls||[])a.push({s:w,th:5,e:1.2});
+  for(const w of lv.springs||[])a.push({s:w,th:6,e:2.05,spring:1});
+  for(const m of lv.movers||[]){const [ox,oy]=moverOff(m,t);a.push({s:[m.s[0]+ox,m.s[1]+oy,m.s[2]+ox,m.s[3]+oy],th:6,e:1.2})}
+  a.push({s:[gx,gy,gx,gy+gh],th:4,e:1.2},{s:[gx+gw,gy,gx+gw,gy+gh],th:4,e:1.2},{s:[gx,gy+gh,gx+gw,gy+gh],th:4,e:1.2});
+  for(const st of strokes)for(let i=1;i<st.length;i++)a.push({s:[st[i-1][0],st[i-1][1],st[i][0],st[i][1]],th:4,e:1.2});
+  return a}
+function inRect(x,y,r,pad){pad=pad||0;return x>r[0]-pad&&x<r[0]+r[2]+pad&&y>r[1]-pad&&y<r[1]+r[3]+pad}
+function newBall(lv){return {x:lv.b[0],y:lv.b[1],vx:0,vy:0,a:0,t:0,cool:0,got:{}}}
+// ein Zeitschritt; liefert "win-tick" | "fail" | null
+function step(ball,lv,strokes,dt,onEvent){const n=12,h=dt/n;
+  for(let k=0;k<n;k++){ball.t+=h;const all=segs(lv,strokes,ball.t);
+    let ax=0,ay=G;for(const f of lv.fans||[])if(inRect(ball.x,ball.y,f)){ax+=f[4];ay+=f[5]}
+    ball.vx+=ax*h;ball.vy+=ay*h;ball.x+=ball.vx*h;ball.y+=ball.vy*h;
+    for(const o of all){const[x1,y1,x2,y2]=o.s,dx=x2-x1,dy=y2-y1,L2=dx*dx+dy*dy;let tt=L2?((ball.x-x1)*dx+(ball.y-y1)*dy)/L2:0;tt=clamp(tt,0,1);
+      const cx=x1+tt*dx,cy=y1+tt*dy,ex=ball.x-cx,ey=ball.y-cy,d=Math.hypot(ex,ey),mn=R+o.th;
+      if(d<mn&&d>1e-4){const nx=ex/d,ny=ey/d;ball.x=cx+nx*mn;ball.y=cy+ny*mn;const vn=ball.vx*nx+ball.vy*ny;
+        if(vn<0){let e=o.e;if(o.spring){const minV=520;if(-vn*(e-1)<minV)e=1+minV/(-vn);if(onEvent)onEvent("spring")}
+          ball.vx-=e*vn*nx;ball.vy-=e*vn*ny;ball.vx*=0.9993;ball.vy*=0.9993}}}
+    if(ball.cool>0)ball.cool-=h;
+    if(ball.cool<=0)for(const p of lv.portals||[]){if(Math.hypot(ball.x-p[0],ball.y-p[1])<PR){ball.x=p[2];ball.y=p[3];ball.cool=0.6;if(onEvent)onEvent("portal");break}}
+    for(const s of lv.spikes||[])if(inRect(ball.x,ball.y,s,R*0.6))return "fail";
+    (lv.coins||[]).forEach((c,i)=>{if(!ball.got[i]&&Math.hypot(ball.x-c[0],ball.y-c[1])<R+16){ball.got[i]=1;if(onEvent)onEvent("coin")}});
+    if(ball.y>720||ball.x<-150||ball.x>1150)return "fail";}
+  ball.a+=ball.vx/R*dt;
+  const[gx,gy,gw,gh]=lv.goal;return (ball.x>gx&&ball.x<gx+gw&&ball.y>gy&&ball.y<gy+gh)?"in":null}
+// komplette Simulation (für den Prüfer)
+function simulate(lv,strokes,maxT){const b=newBall(lv);let inT=0,dt=1/60;
+  for(let t=0;t<(maxT||9);t+=dt){const r=step(b,lv,strokes,dt);if(r==="fail")return {ok:false};if(r==="in"){inT+=dt;if(inT>0.4)return {ok:true,t,coins:Object.keys(b.got).length}}else inT=0}
+  return {ok:false}}
+function strokeLen(s){let l=0;for(let i=1;i<s.length;i++)l+=Math.hypot(s[i][0]-s[i-1][0],s[i][1]-s[i-1][1]);return l}
+function drawAllowed(lv,x,y){for(const z of lv.nodraw||[])if(inRect(x,y,z))return false;return true}
+return {R,G,PR,segs,step,simulate,newBall,moverOff,strokeLen,drawAllowed,inRect};
+})();
+if(typeof module!=="undefined")module.exports=DRAW_ENGINE;
+
+const DRAW_LEVELS=[{"n":"Sternenjagd 1","tip":"Sammle unterwegs die Bonus-Sterne ein!","b":[177,92],"coins":[[379,221],[557,264]],"goal":[754,470,120,85],"walls":[],"ink":790},{"n":"Sternenjagd 2","tip":"Sammle unterwegs die Bonus-Sterne ein!","b":[164,101],"coins":[[374,287],[578,321]],"goal":[731,470,120,85],"walls":[],"ink":830},{"n":"Sternenjagd 3","tip":"Sammle unterwegs die Bonus-Sterne ein!","b":[162,69],"coins":[[404,233],[485,425]],"goal":[750,470,120,85],"walls":[],"ink":860},{"n":"Sternenjagd 4","tip":"Sammle unterwegs die Bonus-Sterne ein!","b":[112,75],"coins":[[383,215],[543,406]],"goal":[826,470,120,85],"walls":[],"ink":1080},{"n":"Sprungfeder 1","tip":"Orange Federn schleudern die Kugel hoch. Lenke sie zum Korb.","b":[322,103],"springs":[[232,560,412,560]],"goal":[838,321,130,85],"walls":[],"ink":280},{"n":"Sprungfeder 2","tip":"Orange Federn schleudern die Kugel hoch. Lenke sie zum Korb.","b":[227,88],"springs":[[137,560,317,560]],"goal":[825,305,130,85],"walls":[],"ink":290},{"n":"Sprungfeder 3","tip":"Orange Federn schleudern die Kugel hoch. Lenke sie zum Korb.","b":[130,101],"springs":[[40,560,220,560]],"goal":[715,254,130,85],"walls":[[536,284,492,600]],"ink":480},{"n":"Sprungfeder 4","tip":"Orange Federn schleudern die Kugel hoch. Lenke sie zum Korb.","b":[222,102],"springs":[[132,560,312,560]],"goal":[831,277,130,85],"walls":[[559,269,496,600]],"ink":1110},{"n":"Sprungfeder 5","tip":"Orange Federn schleudern die Kugel hoch. Lenke sie zum Korb.","b":[125,109],"springs":[[35,560,215,560]],"goal":[705,229,130,85],"walls":[],"ink":810},{"n":"Sprungfeder 6","tip":"Orange Federn schleudern die Kugel hoch. Lenke sie zum Korb.","b":[291,108],"springs":[[201,560,381,560]],"goal":[756,190,130,85],"walls":[[467,275,501,600]],"ink":1040},{"n":"Dornenfeld 1","tip":"Rote Dornen nicht berühren! Baue eine Brücke darüber.","b":[194,92],"spikes":[[286,540,325,60]],"goal":[734,470,120,85],"walls":[],"ink":750},{"n":"Dornenfeld 2","tip":"Rote Dornen nicht berühren! Baue eine Brücke darüber.","b":[210,88],"spikes":[[281,540,367,60]],"goal":[728,470,120,85],"walls":[],"ink":700},{"n":"Dornenfeld 3","tip":"Rote Dornen nicht berühren! Baue eine Brücke darüber.","b":[129,81],"spikes":[[283,540,382,60]],"goal":[808,470,120,85],"walls":[],"ink":930},{"n":"Dornenfeld 4","tip":"Rote Dornen nicht berühren! Baue eine Brücke darüber.","b":[138,99],"spikes":[[302,540,391,60]],"goal":[804,470,120,85],"walls":[[441,258,521,302]],"ink":950},{"n":"Dornenfeld 5","tip":"Rote Dornen nicht berühren! Baue eine Brücke darüber.","b":[195,82],"spikes":[[283,540,369,60]],"goal":[704,470,120,85],"walls":[[590,237,528,343]],"ink":740},{"n":"Dornenfeld 6","tip":"Rote Dornen nicht berühren! Baue eine Brücke darüber.","b":[102,80],"spikes":[[313,540,339,60]],"goal":[721,470,120,85],"walls":[[541,257,392,339]],"ink":800},{"n":"Zauberportal 1","tip":"Lila Portale beamen die Kugel woanders hin.","b":[181,70],"portals":[[181,266,692,114]],"goal":[828,470,120,85],"walls":[[241,200,241,600]],"ink":210},{"n":"Zauberportal 2","tip":"Lila Portale beamen die Kugel woanders hin.","b":[191,70],"portals":[[191,272,638,107]],"goal":[851,470,120,85],"walls":[],"ink":210},{"n":"Zauberportal 3","tip":"Lila Portale beamen die Kugel woanders hin.","b":[214,70],"portals":[[214,260,448,118]],"goal":[807,470,120,85],"walls":[],"ink":470},{"n":"Zauberportal 4","tip":"Lila Portale beamen die Kugel woanders hin.","b":[327,70],"portals":[[327,272,536,97]],"goal":[797,470,120,85],"walls":[],"ink":290},{"n":"Zauberportal 5","tip":"Lila Portale beamen die Kugel woanders hin.","b":[200,70],"portals":[[200,279,631,105]],"goal":[833,470,120,85],"walls":[[260,200,260,600]],"ink":200},{"n":"Zauberportal 6","tip":"Lila Portale beamen die Kugel woanders hin.","b":[273,70],"portals":[[273,287,458,100]],"goal":[827,470,120,85],"walls":[[333,200,333,600]],"ink":440},{"n":"Beweglicher Balken 1","tip":"Der graue Balken bewegt sich. Das richtige Timing zählt!","b":[115,102],"movers":[{"s":[434,294,606,330],"dx":0,"dy":126,"per":4}],"goal":[753,470,120,85],"walls":[],"ink":390},{"n":"Beweglicher Balken 2","tip":"Der graue Balken bewegt sich. Das richtige Timing zählt!","b":[132,80],"movers":[{"s":[386,254,603,339],"dx":0,"dy":85,"per":2}],"goal":[715,470,120,85],"walls":[],"ink":470},{"n":"Beweglicher Balken 3","tip":"Der graue Balken bewegt sich. Das richtige Timing zählt!","b":[154,115],"movers":[{"s":[390,282,583,333],"dx":0,"dy":136,"per":3}],"goal":[806,470,120,85],"walls":[],"ink":440},{"n":"Beweglicher Balken 4","tip":"Der graue Balken bewegt sich. Das richtige Timing zählt!","b":[210,68],"movers":[{"s":[435,262,627,288],"dx":0,"dy":137,"per":3}],"goal":[745,470,120,85],"walls":[],"ink":300},{"n":"Beweglicher Balken 5","tip":"Der graue Balken bewegt sich. Das richtige Timing zählt!","b":[164,88],"movers":[{"s":[434,305,613,281],"dx":0,"dy":111,"per":2}],"goal":[768,470,120,85],"walls":[],"ink":590},{"n":"Windstoß 1","tip":"Der Wind pustet zur Seite – nutze ihn!","b":[140,78],"fans":[[300,227,300,180,797,0]],"goal":[790,470,120,85],"walls":[],"ink":500},{"n":"Windstoß 2","tip":"Der Wind pustet zur Seite – nutze ihn!","b":[152,62],"fans":[[300,288,300,180,578,0]],"goal":[838,470,120,85],"walls":[],"ink":820},{"n":"Windstoß 3","tip":"Der Wind pustet zur Seite – nutze ihn!","b":[170,83],"fans":[[300,213,300,180,692,0]],"goal":[824,470,120,85],"walls":[],"ink":520},{"n":"Windstoß 4","tip":"Der Wind pustet nach oben – nutze ihn!","b":[137,105],"fans":[[385,200,160,400,0,-1500]],"goal":[684,237,120,85],"walls":[],"ink":480},{"n":"Windstoß 5","tip":"Der Wind pustet nach oben – nutze ihn!","b":[151,102],"fans":[[403,200,160,400,0,-1500]],"goal":[739,252,120,85],"walls":[],"ink":490},{"n":"Windstoß 6","tip":"Der Wind pustet nach oben – nutze ihn!","b":[87,95],"fans":[[422,200,160,400,0,-1500]],"goal":[801,243,120,85],"walls":[],"ink":710},{"n":"Mal-Verbot 1","tip":"Im schraffierten Bereich kann man nicht malen.","b":[181,89],"nodraw":[[507,0,198,600]],"goal":[689,470,120,85],"walls":[],"ink":550},{"n":"Mal-Verbot 2","tip":"Im schraffierten Bereich kann man nicht malen.","b":[120,99],"nodraw":[[497,0,175,600]],"goal":[696,470,120,85],"walls":[],"ink":610},{"n":"Meisterprüfung 1","tip":"Alles kommt zusammen. Gut überlegen!","b":[234,70],"portals":[[234,321,553,111]],"goal":[850,470,120,85],"walls":[[294,200,294,600]],"spikes":[[293,540,396,60]],"ink":310},{"n":"Meisterprüfung 2","tip":"Alles kommt zusammen. Gut überlegen!","b":[113,90],"fans":[[427,200,160,400,0,-1500]],"goal":[671,268,120,85],"walls":[],"spikes":[[307,540,354,60]],"ink":460},{"n":"Meisterprüfung 3","tip":"Alles kommt zusammen. Gut überlegen!","b":[91,65],"movers":[{"s":[389,302,635,300],"dx":0,"dy":114,"per":3}],"goal":[711,470,120,85],"walls":[],"coins":[[345,218],[612,351]],"ink":410},{"n":"Meisterprüfung 4","tip":"Alles kommt zusammen. Gut überlegen!","b":[144,73],"movers":[{"s":[381,317,586,273],"dx":0,"dy":110,"per":3}],"goal":[765,470,120,85],"walls":[],"spikes":[[273,540,383,60]],"ink":680},{"n":"Meisterprüfung 5","tip":"Alles kommt zusammen. Gut überlegen!","b":[177,88],"fans":[[300,287,300,180,545,0]],"goal":[785,470,120,85],"walls":[],"spikes":[[328,540,304,60]],"ink":630},{"n":"Meisterprüfung 6","tip":"Alles kommt zusammen. Gut überlegen!","b":[309,90],"springs":[[219,560,399,560]],"goal":[702,315,130,85],"walls":[[515,228,496,600]],"nodraw":[[402,0,126,600]],"ink":230},{"n":"Meisterprüfung 7","tip":"Alles kommt zusammen. Gut überlegen!","b":[260,89],"springs":[[170,560,350,560]],"goal":[839,298,130,85],"walls":[[513,258,524,600]],"spikes":[[288,540,330,60]],"ink":820},{"n":"Meisterprüfung 8","tip":"Alles kommt zusammen. Gut überlegen!","b":[127,112],"movers":[{"s":[446,330,587,363],"dx":0,"dy":127,"per":2}],"goal":[704,470,120,85],"walls":[],"nodraw":[[445,0,138,600]],"ink":390},{"n":"Meisterprüfung 9","tip":"Alles kommt zusammen. Gut überlegen!","b":[321,68],"springs":[[231,560,411,560]],"goal":[824,160,130,85],"walls":[[500,271,462,600]],"spikes":[[272,540,328,60]],"ink":690},{"n":"Meisterprüfung 10","tip":"Alles kommt zusammen. Gut überlegen!","b":[107,139],"spikes":[[284,540,420,60]],"goal":[818,470,120,85],"walls":[[446,159,495,340]],"ink":1140}];
 GAMES.draw={title:'✏️ Linienzauber',start(stage){
   const C=makeCanvas(stage),g=C.g;
   const LV=[
@@ -712,27 +755,19 @@ GAMES.draw={title:'✏️ Linienzauber',start(stage){
     {n:'Kehrtwende',b:[900,60],goal:[800,500,120,80],walls:[[1000,220,450,280]],ink:1600,tip:'Die Kugel rollt nach links weg. Hol sie zurück.'},
     {n:'Meisterstück',b:[100,60],goal:[890,190,90,70],walls:[[500,150,500,600],[890,260,890,600],[980,260,980,600]],ink:1200,tip:'Ganz sanft bergab über die Säule.'}
   ];
-  const R=18,G=900;
+  LV.push(...DRAW_LEVELS);
+  const E=DRAW_ENGINE,R=E.R;
   let unlocked=store.get('draw_unlocked',0),li=Math.min(store.get('draw_level',0),unlocked,LV.length-1),bestS=store.get('draw_stars',{});
-  let strokes=[],cur=null,ball=null,mode='draw',ink=0,inT=0,still=0,msg='',msgT=0,overlay=null,sc=1,ox=0,oy=0;
+  let simT=0,strokes=[],cur=null,ball=null,mode='draw',ink=0,inT=0,still=0,msg='',msgT=0,overlay=null,sc=1,ox=0,oy=0;
   const L=()=>LV[li];
   function load(i){li=i;store.set('draw_level',li);strokes=[];cur=null;ink=0;resetBall();if(overlay){overlay.remove();overlay=null}updBar()}
-  function resetBall(){ball={x:L().b[0],y:L().b[1],vx:0,vy:0,a:0};mode='draw';inT=0;still=0;updBar()}
-  function segs(){const lv=L(),[gx,gy,gw,gh]=lv.goal,a=lv.walls.map(w=>({s:w,th:5}));a.push({s:[gx,gy,gx,gy+gh],th:4},{s:[gx+gw,gy,gx+gw,gy+gh],th:4},{s:[gx,gy+gh,gx+gw,gy+gh],th:4});
-    for(const st of strokes)for(let i=1;i<st.length;i++)a.push({s:[st[i-1][0],st[i-1][1],st[i][0],st[i][1]],th:4});return a}
-  function step(dt){const all=segs(),n=12,h=dt/n;
-    for(let k=0;k<n;k++){ball.vy+=G*h;ball.x+=ball.vx*h;ball.y+=ball.vy*h;
-      for(const o of all){const[ax,ay,bx,by]=o.s,dx=bx-ax,dy=by-ay,L2=dx*dx+dy*dy;let tt=L2?((ball.x-ax)*dx+(ball.y-ay)*dy)/L2:0;tt=clamp(tt,0,1);
-        const cx=ax+tt*dx,cy=ay+tt*dy,ex=ball.x-cx,ey=ball.y-cy,d=Math.hypot(ex,ey),mn=R+o.th;
-        if(d<mn&&d>1e-4){const nx=ex/d,ny=ey/d;ball.x=cx+nx*mn;ball.y=cy+ny*mn;const vn=ball.vx*nx+ball.vy*ny;if(vn<0){ball.vx-=1.2*vn*nx;ball.vy-=1.2*vn*ny;ball.vx*=0.9993;ball.vy*=0.9993}}}}
-    ball.a+=ball.vx/R*dt;
-  }
-  function update(dt){msgT=Math.max(0,msgT-dt);if(mode!=='run')return;step(dt);
-    const[gx,gy,gw,gh]=L().goal;if(ball.x>gx&&ball.x<gx+gw&&ball.y>gy&&ball.y<gy+gh){inT+=dt;if(inT>0.4)win()}else inT=0;
-    if(ball.y>720||ball.x<-150||ball.x>1150){say('Daneben! Zeichne weiter und versuch es nochmal.');Snd.note(55,.15);resetBall()}
+  function resetBall(){ball=E.newBall(L());mode='draw';inT=0;still=0;updBar()}
+  function update(dt){msgT=Math.max(0,msgT-dt);simT+=dt;if(mode!=='run')return;const r=E.step(ball,L(),strokes,dt,ev=>{if(ev==='coin')Snd.note(79,.12);if(ev==='portal')Snd.note(72,.15);if(ev==='spring')Snd.note(60,.1)});
+    if(r==='in'){inT+=dt;if(inT>0.4)win()}else inT=0;
+    if(r==='fail'){say((L().spikes&&L().spikes.length)?'Autsch, Dornen! Versuch es nochmal.':'Daneben! Zeichne weiter und versuch es nochmal.');Snd.note(55,.15);resetBall()}
     if(Math.hypot(ball.vx,ball.vy)<6&&inT===0){still+=dt;if(still>2.5&&still-dt<=2.5)say('Die Kugel steckt fest. Zeichne nach oder drück ↺.')}else still=0}
   function say(t){msg=t;msgT=3.5}
-  function win(){mode='done';const lv=L(),f=ink/lv.ink,st=f<=0.4?3:f<=0.7?2:1;bestS[li]=Math.max(bestS[li]||0,st);store.set('draw_stars',bestS);
+  function win(){mode='done';const lv=L(),f=ink/lv.ink,nc=(lv.coins||[]).length,gc=Object.keys(ball.got||{}).length;let st=f<=0.4?3:f<=0.7?2:1;if(nc){st=Math.min(3,1+gc+(f<=0.7?1:0))}bestS[li]=Math.max(bestS[li]||0,st);store.set('draw_stars',bestS);
     if(li+1>unlocked){unlocked=Math.min(li+1,LV.length-1);store.set('draw_unlocked',unlocked)}
     [0,4,7,12].forEach((m,i)=>setTimeout(()=>Snd.note(67+m,.22),i*150));
     const last=li===LV.length-1;card('Level '+(li+1)+' geschafft!','<div style="font-size:42px;color:#f2b633">'+'★'.repeat(st)+'<span style="color:#ddd">'+'★'.repeat(3-st)+'</span></div><div style="color:#6b7280">Tinte verbraucht: '+Math.round(f*100)+' %'+(st<3?'<br>Mit weniger Tinte gibt es mehr Sterne.':'')+(last?'<br><b>Alle Level geschafft! 🎉</b>':'')+'</div>',
@@ -740,7 +775,7 @@ GAMES.draw={title:'✏️ Linienzauber',start(stage){
   function card(title,html,btns){if(overlay)overlay.remove();overlay=document.createElement('div');overlay.style.cssText='position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:#0003;z-index:3';
     overlay.innerHTML='<div style="background:#fffdf8;border-radius:24px;padding:24px 30px;text-align:center;box-shadow:0 10px 40px #0003;max-width:92%;line-height:1.5"><div style="font-size:26px;font-weight:600;margin-bottom:8px">'+title+'</div>'+html+'<div class="btns" style="margin-top:14px;display:flex;flex-wrap:wrap;gap:8px;justify-content:center"></div></div>';
     const bx=overlay.querySelector('.btns');btns.forEach(([t,f])=>{const b=document.createElement('button');b.className='pill';b.style.fontSize='16px';b.textContent=t;b.onclick=f;bx.appendChild(b)});stage.appendChild(overlay)}
-  function levels(){let h='<div style="display:grid;grid-template-columns:repeat(4,70px);gap:10px;justify-content:center;margin-top:6px">';
+  function levels(){let h='<div style="display:grid;grid-template-columns:repeat(auto-fill,64px);gap:8px;justify-content:center;margin-top:6px;max-height:60vh;overflow:auto;width:min(560px,80vw)">';
     LV.forEach((l,i)=>{const lock=i>unlocked,s=bestS[i]||0;h+='<button data-i="'+i+'" class="pill" '+(lock?'disabled style="opacity:.4"':'')+' title="'+l.n+'" style="height:64px;border-radius:16px">'+(lock?'🔒':'<b>'+(i+1)+'</b><br><span style="color:#f2b633;font-size:12px">'+'★'.repeat(s)+'</span>')+'</button>'});h+='</div>';
     card('Level wählen',h,[['Schließen',()=>{overlay.remove();overlay=null}]]);overlay.querySelectorAll('button[data-i]').forEach(b=>b.onclick=()=>{if(!b.disabled)load(+b.dataset.i)})}
   // Werkzeugleiste
@@ -753,8 +788,8 @@ GAMES.draw={title:'✏️ Linienzauber',start(stage){
   function updBar(){bGo.textContent=mode==='run'?'↺ Kugel zurück':'▶ Los'}
   const len=s=>{let l=0;for(let i=1;i<s.length;i++)l+=Math.hypot(s[i][0]-s[i-1][0],s[i][1]-s[i-1][1]);return l};
   const toV=e=>{const r=C.cv.getBoundingClientRect();return[(e.clientX-r.left-ox)/sc,(e.clientY-r.top-oy)/sc]};
-  C.cv.addEventListener('pointerdown',e=>{if(mode==='done')return;if(ink>=L().ink-2){say('Die Tinte ist leer. Linie zurücknehmen oder löschen.');return}C.cv.setPointerCapture(e.pointerId);cur=[toV(e)]});
-  C.cv.addEventListener('pointermove',e=>{if(!cur)return;const p=toV(e),q=cur[cur.length-1],d=Math.hypot(p[0]-q[0],p[1]-q[1]);if(d<7)return;
+  C.cv.addEventListener('pointerdown',e=>{if(mode==='done')return;if(ink>=L().ink-2){say('Die Tinte ist leer. Linie zurücknehmen oder löschen.');return}const p0=toV(e);if(!E.drawAllowed(L(),p0[0],p0[1])){say('Hier darf man nicht malen.');return}C.cv.setPointerCapture(e.pointerId);cur=[p0]});
+  C.cv.addEventListener('pointermove',e=>{if(!cur)return;const p=toV(e),q=cur[cur.length-1],d=Math.hypot(p[0]-q[0],p[1]-q[1]);if(d<7)return;if(!E.drawAllowed(L(),p[0],p[1])){finishStroke();say('Hier darf man nicht malen.');return}
     if(ink+d>L().ink){const k=(L().ink-ink)/d;if(k>0.05){cur.push([q[0]+(p[0]-q[0])*k,q[1]+(p[1]-q[1])*k]);ink=L().ink}finishStroke();return}ink+=d;cur.push(p)});
   const finishStroke=()=>{if(cur&&cur.length>1){strokes.push(cur);Snd.note(64,.08)}cur=null};
   C.cv.addEventListener('pointerup',finishStroke);C.cv.addEventListener('pointercancel',finishStroke);
@@ -766,6 +801,15 @@ GAMES.draw={title:'✏️ Linienzauber',start(stage){
     const lv=L(),[gx,gy,gw,gh]=lv.goal;
     g.fillStyle='rgba(120,190,140,.18)';g.fillRect(ox+gx*sc,oy+gy*sc,gw*sc,gh*sc);line([[gx,gy],[gx,gy+gh],[gx+gw,gy+gh],[gx+gw,gy]],'#4f9a6a',8*sc);
     g.font=Math.round(26*sc)+'px sans-serif';g.textAlign='center';g.fillText('⭐',ox+(gx+gw/2)*sc,oy+(gy+gh*0.65)*sc);
+    const T=mode==='run'?ball.t:0;
+    (lv.nodraw||[]).forEach(z=>{g.save();g.beginPath();g.rect(ox+z[0]*sc,oy+z[1]*sc,z[2]*sc,z[3]*sc);g.clip();g.fillStyle='rgba(150,150,170,.13)';g.fillRect(ox+z[0]*sc,oy+z[1]*sc,z[2]*sc,z[3]*sc);g.strokeStyle='rgba(120,120,140,.35)';g.lineWidth=2;for(let k=-600;k<1600;k+=22){g.beginPath();g.moveTo(ox+(z[0]+k)*sc,oy+z[1]*sc);g.lineTo(ox+(z[0]+k-600)*sc,oy+(z[1]+600)*sc);g.stroke()}g.restore()});
+    (lv.fans||[]).forEach(f=>{g.fillStyle='rgba(120,190,230,.16)';g.fillRect(ox+f[0]*sc,oy+f[1]*sc,f[2]*sc,f[3]*sc);g.fillStyle='rgba(70,140,200,.6)';g.font=Math.round(22*sc)+'px sans-serif';g.textAlign='center';const ang=Math.atan2(f[5],f[4]);const ph=(simT*60)%40;
+      for(let yy=f[1]+20;yy<f[1]+f[3];yy+=50)for(let xx=f[0]+20;xx<f[0]+f[2];xx+=50){g.save();g.translate(ox+(xx+Math.cos(ang)*ph*.5)*sc,oy+(yy+Math.sin(ang)*ph*.5)*sc);g.rotate(ang);g.fillText('➜',0,6*sc);g.restore()}});
+    (lv.spikes||[]).forEach(s=>{g.fillStyle='#e05a5a';const n=Math.max(2,Math.round(s[2]/22));for(let k=0;k<n;k++){const x0=s[0]+k*s[2]/n,x1=x0+s[2]/n;g.beginPath();g.moveTo(ox+x0*sc,oy+(s[1]+s[3])*sc);g.lineTo(ox+(x0+x1)/2*sc,oy+s[1]*sc);g.lineTo(ox+x1*sc,oy+(s[1]+s[3])*sc);g.fill()}});
+    (lv.springs||[]).forEach(w=>{line([[w[0],w[1]],[w[2],w[3]]],'#f08c2c',12*sc);g.strokeStyle='#f6b26b';g.lineWidth=3*sc;for(let k=1;k<6;k++){const x=w[0]+(w[2]-w[0])*k/6,y=w[1]+(w[3]-w[1])*k/6;g.beginPath();g.moveTo(ox+x*sc,oy+(y+6)*sc);g.lineTo(ox+(x-6)*sc,oy+(y+14)*sc);g.lineTo(ox+(x+6)*sc,oy+(y+22)*sc);g.stroke()}});
+    (lv.movers||[]).forEach(m=>{const o=E.moverOff(m,T);line([[m.s[0]+o[0],m.s[1]+o[1]],[m.s[2]+o[0],m.s[3]+o[1]]],'#7a8494',12*sc);g.strokeStyle='rgba(120,130,150,.25)';g.setLineDash([5,6]);g.lineWidth=2;g.beginPath();g.moveTo(ox+(m.s[0]+m.s[2])/2*sc-m.dx*sc,oy+((m.s[1]+m.s[3])/2-m.dy)*sc);g.lineTo(ox+((m.s[0]+m.s[2])/2+m.dx)*sc,oy+((m.s[1]+m.s[3])/2+m.dy)*sc);g.stroke();g.setLineDash([])});
+    (lv.portals||[]).forEach(p=>{[[p[0],p[1],'#8e44ad'],[p[2],p[3],'#c39bd3']].forEach(([x,y,c],k)=>{g.strokeStyle=c;g.lineWidth=6*sc;g.beginPath();g.arc(ox+x*sc,oy+y*sc,E.PR*sc,0,7);g.stroke();g.strokeStyle='rgba(142,68,173,.35)';g.lineWidth=3*sc;g.beginPath();g.arc(ox+x*sc,oy+y*sc,E.PR*.6*sc,simT*3+k,simT*3+k+4);g.stroke()})});
+    (lv.coins||[]).forEach((c,i)=>{if(ball.got&&ball.got[i])return;g.font=Math.round(28*sc)+'px sans-serif';g.textAlign='center';g.fillText('🌟',ox+c[0]*sc,oy+(c[1]+10)*sc)});
     lv.walls.forEach(w=>line([[w[0],w[1]],[w[2],w[3]]],'#5b6472',10*sc));
     strokes.forEach(s=>line(s,'#3b6fb6',8*sc));if(cur)line(cur,'#5b8fd6',8*sc);
     if(mode!=='draw'){g.strokeStyle='rgba(200,90,90,.35)';g.setLineDash([4,4]);g.beginPath();g.arc(ox+lv.b[0]*sc,oy+lv.b[1]*sc,R*sc,0,7);g.stroke();g.setLineDash([])}
